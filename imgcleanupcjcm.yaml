@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: imgcleanupcjcm
+  namespace: ops-tools
+  labels:
+    component: imgcleanup
+data:
+  # Removing unused images from registry.gitlab.com/golem-ai or rg.fr-par.scw.cloud, which is 30 days old.
+  cronjobs: 0 0 * * * cd /tmp/ && bash imgcleanupscript.sh

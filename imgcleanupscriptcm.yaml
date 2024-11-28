@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: imgcleanupscriptcm
+  namespace: ops-tools
+  labels:
+    component: imgcleanup
+data:
+  imgcleanupscript.sh: |
+    #!/bin/bash
+
+    # Get the current date in seconds since epoch
+    current_date=$(date +%s)
+
+    # List all image IDs currently in use
+    used_images=$(crictl ps -a -o json | jq -r '.containers[]?.imageRef' | sort -u)
+
+    # List all image IDs and inspect each one for details
+    crictl images -q | while read -r image_id; do
+        # Inspect the image to get the creation date and repo tags
+        createdAt=$(crictl inspecti "$image_id" | jq -r '.info.imageSpec.created // empty')
+        repo_tags=$(crictl inspecti "$image_id" | jq -r '.status.repoTags // empty')
+
+        # Print repoTags and image ID
+        echo "Image ID: $image_id"
+        echo "Repo Tags: $repo_tags"
+
+        # Skip if the image is currently in use
+        if grep -q "$image_id" <<< "$used_images"; then
+            echo "Image $image_id is in use; skipping."
+            continue
+        fi
+
+        # Check if repo tags indicate the image is from the specified registry
+        if [[ ! "$repo_tags" == *"registry.gitlab.com/golem-ai"* ]] && [[ ! "$repo_tags" == *"rg.fr-par.scw.cloud"* ]]; then
+            echo "Image $image_id is not from registry.gitlab.com/golem-ai or rg.fr-par.scw.cloud; skipping."
+            continue
+        fi
+
+        # Check if creation date is missing
+        if [ -z "$createdAt" ]; then
+            echo "Image $image_id has no valid creation date; skipping."
+            continue
+        fi
+
+        # Convert the creation date to seconds since epoch
+        created_date=$(date -d "$createdAt" +%s 2>/dev/null)
+
+        # Check for any date parsing errors
+        if [ $? -ne 0 ]; then
+            echo "Unable to parse creation date for image $image_id; skipping."
+            continue
+        fi
+
+        # Calculate the age in days
+        age_days=$(( (current_date - created_date) / 86400 ))
+
+        # Delete the image if it's older than 30 days and unused
+        if [ "$age_days" -gt 30 ]; then
+            echo "Removing unused image $image_id from registry.gitlab.com/golem-ai or rg.fr-par.scw.cloud, which is 30 days old."
+            # Uncomment the following line to actually delete the image
+            crictl rmi "$image_id"
+        else
+            echo "Image $image_id is unused but only $age_days days old; skipping."
+        fi
+    done

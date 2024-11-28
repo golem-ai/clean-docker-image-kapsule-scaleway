@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: imgcleanup
+  namespace: ops-tools
+spec:
+  selector:
+    matchLabels:
+      component: imgcleanup
+  template:
+    metadata:
+      labels:
+        component: imgcleanup
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: k8s.scaleway.com/pool-name
+                    operator: In
+                    values:
+                      - pool-prod-pvc
+                      - pool-prod-run-nlu
+                      - pool-prod-build-nlu
+                      - pool4-prod-GPU
+      volumes:
+        - name: containerd
+          hostPath:
+            path: /var/run/containerd/containerd.sock
+            type: Socket
+        - name: imgcleanupcjcm
+          configMap:
+            name: imgcleanupcjcm
+        - name: imgcleanupscriptcm
+          configMap:
+            name: imgcleanupscriptcm
+      imagePullSecrets:
+        - name: container-registry-gitlab-scw-secret
+      containers:
+        - name: imgcleanup
+          image: registry.gitlab.com/golem-ai/infra/alpine-toolbox:3.20.3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CONTAINER_RUNTIME_ENDPOINT
+              value: unix:///var/run/containerd/containerd.sock
+            - name: IMAGE_SERVICE_ENDPOINT
+              value: unix:///var/run/containerd/containerd.sock
+          command:
+            [
+              "sh",
+              "-c",
+              "cp /config/imgcleanupscript.sh /tmp/imgcleanupscript.sh && chmod +x /tmp/imgcleanupscript.sh && crontab /config/cronjobs && crond -f -d 8",
+            ]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 50Mi
+          volumeMounts:
+            - name: containerd
+              mountPath: /var/run/containerd/containerd.sock
+            - name: imgcleanupcjcm
+              mountPath: /config/cronjobs
+              subPath: cronjobs
+            - name: imgcleanupscriptcm
+              mountPath: /config/imgcleanupscript.sh
+              subPath: imgcleanupscript.sh
+      tolerations:
+        - effect: NoSchedule
+          key: k8s.scaleway.com/compute
+          operator: Equal
+          value: gpu
+        - effect: NoSchedule
+          key: k8s.scaleway.com/compute
+          operator: Equal
+          value: ia
